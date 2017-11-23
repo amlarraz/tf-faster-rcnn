@@ -114,7 +114,7 @@ def process_image(sess, net, imgfolder, im_name, classes, bboxes_list, outfolder
     # Load the demo image
     im_file = os.path.join(imgfolder,im_name)
     im = cv2.imread(im_file)
-    im = im[:, :-crop, :]
+    im = im[:, :im.shape[1]-crop, :]
     # Detect all object classes and regress object bounds
     timer = Timer()
     timer.tic()
