@@ -41,7 +41,7 @@ import pprint
 COLORMAP = ('#000000', '#ff0000', '#06ff00', '#ff00e4', '#ff9600',
             '#0024ff')
 
-def save_detections(im, fig, ax, list_data, class_name, dets, imgName, outputDir, bboxes_list, color,
+def save_detections(fig, ax, list_data, class_name, dets, color,
                     thresh=0.3):  # Add bboxes.txt
     """Draw detected bounding boxes."""
     import matplotlib.pyplot as plt
@@ -51,7 +51,14 @@ def save_detections(im, fig, ax, list_data, class_name, dets, imgName, outputDir
 
         bbox = dets[i, :4]
         score = dets[i, -1]
-
+        #Use next lines instead the 63-68 if you want to draw only a point
+        #in the center of the bbox
+        #ax.add_patch(
+        #    plt.Rectangle(((bbox[0]+bbox[2])/2 - 1, (bbox[1]+bbox[3])/2 -1),
+        #                  2,
+        #                  2, fill=False,
+        #                  edgecolor=color, linewidth=3.5)
+        #)
         ax.add_patch(
             plt.Rectangle((bbox[0], bbox[1]),
                           bbox[2] - bbox[0],
@@ -63,23 +70,7 @@ def save_detections(im, fig, ax, list_data, class_name, dets, imgName, outputDir
                 bbox=dict(facecolor='blue', alpha=0.3),
                 fontsize=10, color='white')
 
-        bbox_data = imgName[imgName.rfind('/') + 1:]
-        bbox_data = bbox_data + ' ' + class_name + ' ' + str(score)
-        for i in range(len(bbox)):
-            bbox_data = bbox_data + ' ' + str(bbox[i])
-        bbox_data = bbox_data + '\n'
-        bboxes_list.append(bbox_data)
-
     list_data.append([str(len(inds)), class_name, class_name, str(thresh)])
-
-    outfile = os.path.join(outputDir, imgName)
-
-    if not os.path.isdir(outputDir):
-        os.makedirs(outputDir)
-
-    with open(outputDir + '/bboxes.txt', 'w') as bboxes_file:
-        for i in range(len(bboxes_list)):
-            bboxes_file.write(bboxes_list[i])
 
     return fig, ax, list_data
 
@@ -117,12 +108,13 @@ def vis_detections(im, class_name, dets, thresh=0.5):
     plt.draw()
 
 
-def process_image(sess, net, im_file, outfolder, classes, bboxes_list):  # Add bboxes.txt
+def process_image(sess, net, imgfolder, im_name, classes, bboxes_list, outfolder, crop, save_infers):
     """Detect object classes in an image using pre-computed object proposals."""
 
     # Load the demo image
+    im_file = os.path.join(imgfolder,im_name)
     im = cv2.imread(im_file)
-    output = np.zeros((1200, 1200, 3)) + 255
+    im = im[:, :-crop, :]
     # Detect all object classes and regress object bounds
     timer = Timer()
     timer.tic()
@@ -131,12 +123,14 @@ def process_image(sess, net, im_file, outfolder, classes, bboxes_list):  # Add b
     print('Detection took {:.3f}s for {:d} object proposals'.format(timer.total_time, boxes.shape[0]))
 
     # Visualize detections for each class
-    CONF_THRESH = 0.5
+    CONF_THRESH = 0.7
     NMS_THRESH = 0.3
 
-    fig, ax = plt.subplots(figsize=(12, 12))
-    im = im[:, :, (2, 1, 0)]
-    ax.imshow(im, aspect='equal')
+    if save_infers:
+        fig, ax = plt.subplots(figsize=(12, 12))
+        im = im[:, :, (2, 1, 0)]
+        ax.imshow(im, aspect='equal')
+
     list_data = []
 
     for cls_ind, cls in enumerate(classes[1:]):
@@ -148,29 +142,44 @@ def process_image(sess, net, im_file, outfolder, classes, bboxes_list):  # Add b
         keep = nms(dets, NMS_THRESH)
         dets = dets[keep, :]
         color = COLORMAP[cls_ind + 1]
-        fig, ax, list_data = save_detections(im, fig, ax, list_data, cls, dets, im_file, outfolder, bboxes_list, color,
-                                             thresh=CONF_THRESH)
+        inds = np.where(dets[:, -1] >= CONF_THRESH)[0]
+        for i in inds:
+            bbox = dets[i, :4]
+            bbox_str = ''
+            for i in range(len(bbox)):
+                bbox_str = bbox_str + ' ' + str(bbox[i])
+            score = dets[i, -1]
+            line = im_name +' '+ cls +' '+ str(score) + bbox_str +'\n'
+            bboxes_list.append(line)
 
-    title = ''
-    for data in list_data:
-        text = '{} {} detections with p({} | box) >= {}'.format(data[0], data[1], data[1], data[3])
-        title += str(text) + '\n'
+        if save_infers:
+            fig, ax, list_data = save_detections(fig, ax, list_data, cls, dets, color,
+                                                      thresh=CONF_THRESH)
+    if save_infers:
 
-    ax.set_title(title, fontsize=14)
+        title = ''
+        for data in list_data:
+            text = '{} {} detections with p({} | box) >= {}'.format(data[0], data[1], data[1], data[3])
+            title += str(text) + '\n'
 
-    (ignore, filename) = os.path.split(im_file)
-    # outputDir = os.path.join(outputDir,class_name) #Changed to one dir per class
-    outfile = os.path.join(outfolder, filename)
+        ax.set_title(title, fontsize=14)
 
-    if not os.path.isdir(outfolder):
-        os.makedirs(outfolder)
+        (ignore, filename) = os.path.split(im_file)
+        # If you want different directories per class, use this line instead line 168
+        # outputDir = os.path.join(outputDir,class_name)
+        outfile = os.path.join(outfolder, filename)
 
-    print("Saving test image with boxes in {}".format(outfile))
+        if not os.path.isdir(outfolder):
+            os.makedirs(outfolder)
 
-    plt.axis('off')
-    plt.tight_layout()
-    plt.savefig(outfile)
-    plt.close()
+        print("Saving test image with boxes in {}".format(outfile))
+
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(outfile)
+        plt.close()
+
+    return bboxes_list
 
 def ensure_file_exists(file):
     if not os.path.isfile(file):
@@ -182,7 +191,7 @@ def ensure_dir_exists(dir):
         raise IOError("Folder {:s} not found.".format(dir))
 
 
-def inference(net, classes, cfg_file, model, imgfolder, imgsetfile, outfolder):
+def infer_faster_rcnn(net, classes, cfg_file, model, imgfolder, im_names, outfolder, crop, save_inferences):
 
     if cfg_file is not None:
         cfg_from_file(cfg_file)
@@ -193,12 +202,11 @@ def inference(net, classes, cfg_file, model, imgfolder, imgsetfile, outfolder):
     cfg.TEST.HAS_RPN = True  # Use RPN for proposals
 
     # model path
-
-    classes =('__background__',) + tuple(classes.strip().split(','))
+    classes = ('__background__',) + tuple(classes.strip().split(','))
     anchors = cfg.ANCHOR_SCALES
     anchors = map(int, anchors)
 
-    #Add bboxes.txt to storage all the bboxes and scores in a .txt file:
+    # Add bboxes.txt to storage all the bboxes and scores in a .txt file:
     bboxes_list = []
 
     if not os.path.isfile(model + '.meta'):
@@ -230,15 +238,13 @@ def inference(net, classes, cfg_file, model, imgfolder, imgsetfile, outfolder):
 
     print('Loaded network {:s}'.format(model))
 
-    if not imgsetfile == None:
-        assert os.path.exists(imgsetfile), \
-            'Image set file does not exist: {}'.format(imgsetfile)
-        with open(imgsetfile) as f:
-            im_names = [x.strip() + ".jpg" for x in f.readlines()]
-    else:
-        im_names = [f for f in os.listdir(imgfolder)
-                    if isfile(os.path.join(imgfolder, f)) and f.lower().endswith(".jpg")]
-
     for im_name in im_names:
-        print('Processing {} from {} and saving into {}'.format(im_name, imgfolder, outfolder))
-        process_image(sess, net, os.path.join(imgfolder, im_name), outfolder, classes, bboxes_list) # Add bboxes.txt
+        print('Processing {} from {}'.format(im_name, imgfolder))
+        bboxes_list = process_image(sess, net, imgfolder, im_name, classes, bboxes_list,
+                                    outfolder, crop, save_inferences)
+    print('')
+    print('Saving {}/bboxes.txt'.format(outfolder))
+    print('')
+    with open(os.path.join(outfolder, 'bboxes.txt'), 'w') as bboxes_file:
+        for i in range(len(bboxes_list)):
+            bboxes_file.write(bboxes_list[i])
